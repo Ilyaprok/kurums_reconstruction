@@ -934,7 +934,9 @@ function createScene(k, P, voice) {
   const CREST = 22;
   const LIFT = 55;
   const BEND = 0.9;
-  const DROP = 24;
+  const DROP = 12;
+  // the eastern plate's layers bend down under the fault and dive beneath the western plate
+  const DIVE_GAP = 3;
   const FAULT = { x0: -28, tan: 1 };
   const wave = (x, S) => 5 * S.fold * Math.sin(((x + 20) * Math.PI * 2) / 95);
   function layers(x, y, S) {
@@ -963,7 +965,7 @@ function createScene(k, P, voice) {
   }
   // the valley at the foot runs parallel to the ridge and descends towards the viewer (south)
   const FOOT = faceFoot(stateOf(6));
-  const VALLEY = { x: FOOT + 14, w: 8, depth: 6, tilt: 6 };
+  const VALLEY = { x: FOOT + 18, w: 14, depth: 13, tilt: 6 };
   const LOG_FW = 3;
   function valleyCut(x, y, S) {
     if (S.up <= 0 || x <= CREST) return 0;
@@ -981,7 +983,7 @@ function createScene(k, P, voice) {
     const start = LOGS[0].y - 4;
     const front = riverFront(S);
     const along = sm(start - 6, start, y) * (1 - sm(front - 14, front, y)) * sm(0, 0.3, S.frost);
-    const river = 3.4 * Math.exp(-(((x - VALLEY.x) / (VALLEY.w * 0.85)) ** 2)) * along;
+    const river = 4.5 * Math.exp(-(((x - VALLEY.x) / (VALLEY.w * 0.8)) ** 2)) * along;
     let t = (talus + fan + river) * sm(CREST + 4, CREST + 8, x);
     if (x < foot) t = Math.min(t, Math.max(0, faultZ(x, S) - fwTop));
     return t + (t > 0.4 ? 0.35 * rough(x * 1.7, y * 1.7) * sm(0.4, 2, t) : 0);
@@ -994,6 +996,11 @@ function createScene(k, P, voice) {
   function field(x, y, S) {
     const zf = faultZ(x, S);
     const fw = layers(x, y, S);
+    if (S.up > 0) {
+      const dive = S.up * Math.max(0, fw.q - (zf - DIVE_GAP));
+      fw.q -= dive;
+      fw.b -= dive;
+    }
     fw.top = Math.min(fw.top, zf) - valleyCut(x, y, S);
     const debris = x > CREST ? apron(x, y, S, fw.top) : 0;
     let hw = null;
@@ -1049,8 +1056,8 @@ function createScene(k, P, voice) {
   {
     const random = rng(7);
     const probe = (u) => stateOf(4 + 2 * u);
-    for (let n = 0; n < 96; n++) {
-      const uBorn = 0.03 + 0.8 * (n / 96) + random() * 0.012;
+    for (let n = 0; n < 140; n++) {
+      const uBorn = 0.03 + 0.8 * (n / 140) + random() * 0.012;
       const S = probe(uBorn);
       const foot = faceFoot(S);
       const log = LOGS[n % LOGS.length];
@@ -1060,9 +1067,9 @@ function createScene(k, P, voice) {
       let mid;
       let to;
       if (inLog) {
-        mid = [VALLEY.x + (random() - 0.5) * 4, y];
-        const end = Math.min(riverFront(probe(Math.min(1, uBorn + 0.5))) - 6, Y0 - 5);
-        to = [VALLEY.x + (random() - 0.5) * VALLEY.w * 1.2, Math.max(y + 2, y + random() * (end - y))];
+        mid = [VALLEY.x + (random() - 0.5) * 6, y];
+        const end = Math.min(riverFront(probe(Math.min(1, uBorn + 0.6))) - 6, Y0 - 5);
+        to = [VALLEY.x + (random() - 0.5) * VALLEY.w * 1.1, Math.max(y + 2, y + (0.35 + 0.65 * random()) * (end - y))];
       } else {
         mid = [foot + 2 + random() * 3, y];
         to = mid;
@@ -1081,7 +1088,8 @@ function createScene(k, P, voice) {
     }
     for (const block of BLOCKS) {
       block.leave = block.uBorn + 0.025;
-      block.span = Math.min(0.12 + (block.mid[0] - block.from[0] + block.to[1] - block.mid[1]) * 0.005 + random() * 0.05, 0.995 - block.leave);
+      block.roll = 0.035;
+      block.span = Math.max(0.001, Math.min(0.3 + (block.to[1] - block.mid[1]) * 0.006 + random() * 0.1, 0.995 - block.leave - block.roll));
     }
   }
 
@@ -1457,16 +1465,15 @@ function createScene(k, P, voice) {
       if (S.u < block.uBorn) continue;
       loose++;
       const fall = sm(block.uBorn, block.uBorn + 0.025, S.u);
-      const travel = sm(block.leave, block.leave + block.span, S.u);
-      // a quick roll down the gully, then a slow creep along the valley
-      const roll = sm(0, 0.22, travel);
-      const creep = sm(0.22, 1, travel);
+      // a quick roll down the gully, then a slow, steady creep along the valley
+      const roll = sm(block.leave, block.leave + block.roll, S.u);
+      const creep = clamp01((S.u - block.leave - block.roll) / block.span);
       const x = lerp(lerp(block.from[0], block.mid[0], roll), block.to[0], creep);
       const y = lerp(lerp(block.from[1], block.mid[1], roll), block.to[1], creep);
       const ground = sampleH(x, y, S);
-      const active = travel > 0 && travel < 1;
+      const active = roll > 0 && creep < 1;
       if (active) moving++;
-      else if (travel >= 1) settled++;
+      else if (creep >= 1) settled++;
       const heave = 0.4 * Math.sin((flow * 9 + block.phase) * Math.PI * 2) * (active ? 1 : 0.2) * (1 - S.forest);
       const drop = (1 - fall) * (1 - fall) * Math.max(0, block.roof - ground);
       const z = ground - 0.7 + heave + drop;
@@ -1726,7 +1733,7 @@ function createScene(k, P, voice) {
   };
 }
 
-const scene = createScene(k, P, {"intro":3.193,"stage-1":11.752,"stage-2":12.383,"stage-3":15.544,"stage-4":23.12,"stage-5":13.611,"stage-6":17.911,"stage-7":11.338} ?? undefined);
+const scene = createScene(k, P, {"intro":3.193,"stage-1":11.752,"stage-2":12.383,"stage-3":15.544,"stage-4":23.155,"stage-5":13.636,"stage-6":17.576,"stage-7":11.338} ?? undefined);
 const COUNT = scene.STAGE_COUNT;
 const { DUR, HOLD, INTRO, OUTRO } = scene.TIMELINE;
 const TOTAL = INTRO + DUR.reduce((a, b) => a + b, 0) + OUTRO;
